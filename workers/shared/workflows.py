@@ -49,6 +49,7 @@ class FileProcessingWorkflow:
                 FetchInput(file_id=file_id, s3_key=s3_key),
                 task_queue=TQ_INGEST,
                 start_to_close_timeout=timedelta(minutes=2),
+                result_type=FetchResult,
             )
 
             # 2. Decide doc vs image (also lightweight)
@@ -56,6 +57,7 @@ class FileProcessingWorkflow:
                 "detect_kind", fetched,
                 task_queue=TQ_INGEST,
                 start_to_close_timeout=timedelta(seconds=30),
+                result_type=str,
             )
 
             # 3. Convert to text
@@ -70,12 +72,14 @@ class FileProcessingWorkflow:
                     "ocr_image", convert_input,
                     task_queue=TQ_OCR,
                     start_to_close_timeout=timedelta(minutes=10),
+                    result_type=ConvertResult,
                 )
             else:
                 converted = await workflow.execute_activity(
                     "convert_doc", convert_input,
                     task_queue=TQ_DOC,
                     start_to_close_timeout=timedelta(minutes=5),
+                    result_type=ConvertResult,
                 )
 
             # 4. Chunk + embed in ChromaDB
@@ -84,6 +88,7 @@ class FileProcessingWorkflow:
                 IngestInput(file_id=file_id, filename=fetched.filename),
                 task_queue=TQ_INGEST,
                 start_to_close_timeout=timedelta(minutes=10),
+                result_type=IngestResult,
             )
 
             # 5. Mark ready
@@ -92,6 +97,7 @@ class FileProcessingWorkflow:
                 {"file_id": file_id, "status": "ready"},
                 task_queue=TQ_INGEST,
                 start_to_close_timeout=timedelta(seconds=15),
+                result_type=str,
             )
             return {
                 "file_id": file_id,
@@ -109,6 +115,7 @@ class FileProcessingWorkflow:
                     {"file_id": file_id, "status": "error", "error": str(e)[:500]},
                     task_queue=TQ_INGEST,
                     start_to_close_timeout=timedelta(seconds=15),
+                    result_type=str,
                 )
             except Exception:
                 pass
