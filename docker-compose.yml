@@ -1,0 +1,256 @@
+version: "3.9"
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Claude RAG Chat — full stack: FastAPI + ChromaDB + LocalStack S3 + Temporal
+#                                + Python workers (doc / ocr / ingest)
+#                                + static HTML/Tailwind/JS frontend
+# ─────────────────────────────────────────────────────────────────────────────
+
+services:
+  # ── Vector store ─────────────────────────────────────────────────────────
+  chromadb:
+    image: chromadb/chroma:0.5.20
+    container_name: rag-chromadb
+    restart: unless-stopped
+    environment:
+      - IS_PERSISTENT=TRUE
+      - ANONYMIZED_TELEMETRY=FALSE
+    volumes:
+      - chroma-data:/chroma/chroma
+    ports:
+      - "8001:8000"
+    networks: [ragnet]
+    healthcheck:
+      test: ["CMD", "echo"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+
+  # ── LocalStack S3 ────────────────────────────────────────────────────────
+  localstack:
+    image: localstack/localstack:3.7
+    container_name: rag-localstack
+    restart: unless-stopped
+    environment:
+      - SERVICES=s3
+      - DEBUG=0
+      - PERSISTENCE=1
+      - AWS_DEFAULT_REGION=us-east-1
+    volumes:
+      - localstack-data:/var/lib/localstack
+      - ./localstack/init-aws.sh:/etc/localstack/init/ready.d/init-aws.sh:ro
+    ports:
+      - "4566:4566"
+    networks: [ragnet]
+    healthcheck:
+      test: ["CMD", "curl", "-fs", "http://localhost:4566/_localstack/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+
+  # ── Temporal (auto-setup bundles postgres + server) ──────────────────────
+  temporal-postgres:
+    image: postgres:16-alpine
+    container_name: rag-temporal-postgres
+    restart: unless-stopped
+    environment:
+      - POSTGRES_USER=temporal
+      - POSTGRES_PASSWORD=temporal
+      - POSTGRES_DB=temporal
+    volumes:
+      - temporal-pg-data:/var/lib/postgresql/data
+    networks: [ragnet]
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U temporal"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+
+  temporal:
+    build:
+      context: ./temporal
+      dockerfile: Dockerfile
+    image: rag-temporal-with-dynamicconfig
+    container_name: rag-temporal
+    restart: unless-stopped
+    depends_on:
+      temporal-postgres:
+        condition: service_healthy
+    environment:
+      - DB=postgres12
+      - DB_PORT=5432
+      - POSTGRES_USER=temporal
+      - POSTGRES_PWD=temporal
+      - POSTGRES_SEEDS=temporal-postgres
+      # Absolute path — the dynamic-config file is baked into the image at
+      # this exact location by ./temporal/Dockerfile, so this resolves
+      # regardless of CWD or volume-mount behaviour.
+      - DYNAMIC_CONFIG_FILE_PATH=/etc/temporal/config/dynamicconfig/development-sql.yaml
+      - BIND_ON_IP=0.0.0.0
+      - DEFAULT_NAMESPACE=default
+      - DEFAULT_NAMESPACE_RETENTION=24h
+      - SKIP_DEFAULT_NAMESPACE_CREATION=false
+      - LOG_LEVEL=info
+    ports:
+      - "7233:7233"
+    networks: [ragnet]
+    # Wait until the default namespace is actually queryable — auto-setup
+    # creates it as a post-start step, so simply being up != being ready.
+    healthcheck:
+      test: ["CMD-SHELL", "tctl --address 127.0.0.1:7233 namespace describe default >/dev/null 2>&1"]
+      interval: 10s
+      timeout: 5s
+      retries: 30
+      start_period: 30s
+
+  temporal-ui:
+    image: temporalio/ui:2.31.2
+    container_name: rag-temporal-ui
+    restart: unless-stopped
+    depends_on: [temporal]
+    environment:
+      - TEMPORAL_ADDRESS=temporal:7233
+      - TEMPORAL_CORS_ORIGINS=http://localhost:8080
+    ports:
+      - "8088:8080"
+    networks: [ragnet]
+
+  # ── FastAPI backend ──────────────────────────────────────────────────────
+  backend:
+    build: ./backend
+    container_name: rag-backend
+    restart: unless-stopped
+    depends_on:
+      chromadb:
+        condition: service_healthy
+      localstack:
+        condition: service_healthy
+      temporal:
+        condition: service_healthy
+    env_file: .env
+    environment:
+      - CHROMA_HOST=chromadb
+      - CHROMA_PORT=8000
+      - S3_ENDPOINT=http://localstack:4566
+      - S3_BUCKET=rag-uploads
+      - AWS_ACCESS_KEY_ID=test
+      - AWS_SECRET_ACCESS_KEY=test
+      - AWS_DEFAULT_REGION=us-east-1
+      - TEMPORAL_HOST=temporal:7233
+      - TEMPORAL_NAMESPACE=default
+      - DB_PATH=/data/files.db
+    volumes:
+      - backend-data:/data
+    ports:
+      - "8000:8000"
+    networks: [ragnet]
+
+  # ── Doc-conversion worker (python-docx, pypdf, beautifulsoup, ...) ───────
+  doc-worker:
+    build:
+      context: ./workers
+      dockerfile: Dockerfile.doc
+    container_name: rag-doc-worker
+    restart: unless-stopped
+    depends_on:
+      temporal:
+        condition: service_healthy
+      localstack:
+        condition: service_healthy
+      chromadb:
+        condition: service_healthy
+    env_file: .env
+    environment:
+      - WORKER_ROLE=doc
+      - CHROMA_HOST=chromadb
+      - CHROMA_PORT=8000
+      - S3_ENDPOINT=http://localstack:4566
+      - S3_BUCKET=rag-uploads
+      - AWS_ACCESS_KEY_ID=test
+      - AWS_SECRET_ACCESS_KEY=test
+      - AWS_DEFAULT_REGION=us-east-1
+      - TEMPORAL_HOST=temporal:7233
+      - TEMPORAL_NAMESPACE=default
+      - DB_PATH=/data/files.db
+    volumes:
+      - backend-data:/data
+    networks: [ragnet]
+
+  # ── OCR worker (tesseract + pillow) ──────────────────────────────────────
+  ocr-worker:
+    build:
+      context: ./workers
+      dockerfile: Dockerfile.ocr
+    container_name: rag-ocr-worker
+    restart: unless-stopped
+    depends_on:
+      temporal:
+        condition: service_healthy
+      localstack:
+        condition: service_healthy
+    env_file: .env
+    environment:
+      - WORKER_ROLE=ocr
+      - S3_ENDPOINT=http://localstack:4566
+      - S3_BUCKET=rag-uploads
+      - AWS_ACCESS_KEY_ID=test
+      - AWS_SECRET_ACCESS_KEY=test
+      - AWS_DEFAULT_REGION=us-east-1
+      - TEMPORAL_HOST=temporal:7233
+      - TEMPORAL_NAMESPACE=default
+      - DB_PATH=/data/files.db
+    volumes:
+      - backend-data:/data
+    networks: [ragnet]
+
+  # ── Ingest worker — runs the workflow + chunks + writes to ChromaDB ──────
+  ingest-worker:
+    build:
+      context: ./workers
+      dockerfile: Dockerfile.ingest
+    container_name: rag-ingest-worker
+    restart: unless-stopped
+    depends_on:
+      temporal:
+        condition: service_healthy
+      chromadb:
+        condition: service_healthy
+    env_file: .env
+    environment:
+      - WORKER_ROLE=ingest
+      - CHROMA_HOST=chromadb
+      - CHROMA_PORT=8000
+      - S3_ENDPOINT=http://localstack:4566
+      - S3_BUCKET=rag-uploads
+      - AWS_ACCESS_KEY_ID=test
+      - AWS_SECRET_ACCESS_KEY=test
+      - AWS_DEFAULT_REGION=us-east-1
+      - TEMPORAL_HOST=temporal:7233
+      - TEMPORAL_NAMESPACE=default
+      - DB_PATH=/data/files.db
+    volumes:
+      - backend-data:/data
+    networks: [ragnet]
+
+  # ── Static frontend (nginx serving HTML/JS/Tailwind via CDN) ─────────────
+  frontend:
+    image: nginx:1.27-alpine
+    container_name: rag-frontend
+    restart: unless-stopped
+    depends_on: [backend]
+    volumes:
+      - ./frontend:/usr/share/nginx/html:ro
+      - ./frontend/nginx.conf:/etc/nginx/conf.d/default.conf:ro
+    ports:
+      - "8080:80"
+    networks: [ragnet]
+
+networks:
+  ragnet:
+    driver: bridge
+
+volumes:
+  chroma-data:
+  localstack-data:
+  temporal-pg-data:
+  backend-data:

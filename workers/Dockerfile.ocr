@@ -1,0 +1,15 @@
+FROM python:3.12-slim
+WORKDIR /app
+ENV PYTHONUNBUFFERED=1 PIP_NO_CACHE_DIR=1 PYTHONPATH=/app
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    ca-certificates tesseract-ocr libtesseract-dev \
+    && rm -rf /var/lib/apt/lists/*
+
+COPY requirements.ocr.txt requirements.txt
+RUN pip install -r requirements.txt
+
+COPY shared/ ./shared/
+COPY ocr_worker.py .
+
+CMD ["python", "ocr_worker.py"]

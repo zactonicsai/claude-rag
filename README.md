@@ -55,6 +55,44 @@ Then open:
 | http://localhost:4566            | LocalStack S3 endpoint               |
 | http://localhost:8001            | ChromaDB API                         |
 
+### Recovering from a broken first boot
+
+If a previous `docker compose up` failed with the temporal "dynamic config
+… no such file or directory" error, the dead container and Postgres state
+need to be cleared so the rebuild takes effect:
+
+```bash
+docker compose down -v          # stop and remove volumes
+docker compose build temporal   # rebuild the temporal image with the baked-in config
+docker compose up
+```
+
+To verify the file actually made it into the running image:
+
+```bash
+docker compose exec temporal ls -l /etc/temporal/config/dynamicconfig/
+# expect: development-sql.yaml
+```
+
+### Windows-specific notes
+
+* **Use the `build:` form, not `image:`.** The `temporal` service in
+  `docker-compose.yml` must be `build: ./temporal` (it bakes the dynamic-config
+  file into a custom image). If you copy a snippet from elsewhere and end up
+  with `image: temporalio/auto-setup:1.25.2` directly + no volume mount, the
+  upstream image has nothing at the configured `DYNAMIC_CONFIG_FILE_PATH` and
+  startup fails immediately.
+* **Line endings.** The repo ships a `.gitattributes` that forces LF on all
+  YAML / shell / Dockerfile content, and `temporal/Dockerfile` runs the YAML
+  through `tr -d '\r'` during the COPY step, so even if your extractor or Git
+  config converted to CRLF, the file inside the container is correct.
+* **WSL2 file sharing.** Make sure your project lives somewhere Docker
+  Desktop is allowed to read (Settings → Resources → File Sharing). Putting
+  the repo under `\\wsl$\...` or directly inside the WSL filesystem usually
+  works best; deeply-nested paths under `OneDrive` sometimes don't.
+* **PowerShell quoting.** All commands in this README assume bash semantics.
+  If you're in PowerShell, use straight quotes (`"`), not smart quotes.
+
 ---
 
 ## Using it
@@ -189,6 +227,21 @@ from a clean checkout passes.
 
 ## Things to know / extend
 
+* **Temporal needs the dynamic-config setup file.** `auto-setup` reads
+  `DYNAMIC_CONFIG_FILE_PATH` and the server fails to start if that file isn't
+  present, with errors like *"unable to validate dynamic config: stat
+  config/dynamicconfig/development-sql.yaml: no such file or directory"*.
+  The repo handles this by **baking the file into a custom image**
+  (`temporal/Dockerfile`, which extends `temporalio/auto-setup:1.25.2` and
+  copies `temporal/dynamicconfig/development-sql.yaml` to its absolute path
+  inside the image). Compose builds this image as `rag-temporal-with-dynamicconfig`.
+  Bind mounts were the original approach but they silently no-op on Docker
+  Desktop / WSL2 setups when the host path isn't where compose thinks it is —
+  bake-in is bulletproof.
+  The compose healthcheck waits for `tctl namespace describe default` to
+  succeed before the backend and workers are allowed to connect, so workers
+  don't race the namespace-creation step on first boot.
+
 * The default Chroma embedding function is the bundled SentenceTransformer
   (`all-MiniLM-L6-v2`). The first chunk-and-embed call after `compose up`
   downloads the model — a few hundred MB, takes a minute. Subsequent runs
@@ -200,4 +253,3 @@ from a clean checkout passes.
   to the OCR worker (rasterize first with `pdf2image` and feed to Tesseract).
 * The SQLite file is mounted on the shared `backend-data` volume so all
   workers can update statuses; for production you'd swap this for Postgres.
-"# claude-rag" 

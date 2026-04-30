@@ -1,0 +1,10 @@
+# Force LF line endings for files that get executed inside Linux containers.
+# Without this, Windows users who clone or extract the project can end up with
+# CRLF in YAML / shell / Dockerfile content, which breaks Tesseract scripts,
+# Temporal's Go YAML parser, and various Linux-only tooling.
+*.yaml      text eol=lf
+*.yml       text eol=lf
+*.sh        text eol=lf
+Dockerfile  text eol=lf
+Dockerfile.* text eol=lf
+*.conf      text eol=lf

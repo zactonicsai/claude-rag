@@ -1,0 +1,120 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Claude RAG Chat</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <link rel="stylesheet" href="./styles.css" />
+</head>
+<body class="bg-slate-50 text-slate-800 h-screen overflow-hidden">
+
+  <div class="flex h-full">
+
+    <!-- ───────────── Sidebar ───────────── -->
+    <aside class="w-96 bg-white border-r border-slate-200 flex flex-col">
+      <header class="p-4 border-b border-slate-200">
+        <h1 class="text-lg font-semibold">Context files</h1>
+        <p class="text-xs text-slate-500 mt-1">
+          Upload docs &amp; images. Tick the ones you want included in your next query.
+        </p>
+      </header>
+
+      <div class="p-4 border-b border-slate-200 space-y-3">
+        <label class="block">
+          <span class="sr-only">Upload</span>
+          <input id="upload" type="file" multiple
+                 class="block w-full text-sm text-slate-600
+                        file:mr-3 file:py-2 file:px-3 file:rounded-md
+                        file:border-0 file:text-sm file:font-medium
+                        file:bg-indigo-600 file:text-white
+                        hover:file:bg-indigo-700 cursor-pointer" />
+        </label>
+        <p id="upload-status" class="text-xs text-slate-500 min-h-[1em]"></p>
+      </div>
+
+      <div class="flex-1 overflow-auto" id="files-pane">
+        <table class="w-full text-sm">
+          <thead class="bg-slate-100 text-slate-600 text-xs uppercase">
+            <tr>
+              <th class="p-2 w-8"></th>
+              <th class="p-2 text-left">File</th>
+              <th class="p-2 text-left">Status</th>
+              <th class="p-2 text-right w-14">Chunks</th>
+              <th class="p-2 w-16"></th>
+            </tr>
+          </thead>
+          <tbody id="files-tbody"></tbody>
+        </table>
+        <p id="files-empty" class="text-center text-slate-400 text-sm p-6 hidden">
+          No files uploaded yet.
+        </p>
+      </div>
+
+      <footer class="p-3 border-t border-slate-200 text-xs text-slate-500">
+        <div>Session cost: <span id="session-cost" class="font-mono">$0.000000</span></div>
+        <div>Requests: <span id="session-requests" class="font-mono">0</span></div>
+      </footer>
+    </aside>
+
+    <!-- ───────────── Main chat ───────────── -->
+    <main class="flex-1 flex flex-col">
+      <header class="border-b border-slate-200 bg-white p-4 flex items-center gap-6">
+        <h2 class="text-lg font-semibold">Claude RAG Chat</h2>
+        <label class="flex items-center gap-2 text-sm">
+          <input id="chroma-only" type="checkbox" class="rounded" />
+          <span>Use ChromaDB only (skip Claude)</span>
+        </label>
+        <button id="clear-chat"
+                class="ml-auto text-sm text-slate-500 hover:text-slate-800">
+          Clear chat
+        </button>
+      </header>
+
+      <section id="messages"
+               class="flex-1 overflow-auto p-6 space-y-6 bg-slate-50">
+        <!-- system intro -->
+        <div class="max-w-3xl mx-auto text-center text-sm text-slate-400">
+          Ask a question. If files are checked in the sidebar, only those will be
+          searched; otherwise the whole library is searched.
+        </div>
+      </section>
+
+      <footer class="border-t border-slate-200 bg-white p-4">
+        <form id="chat-form" class="max-w-3xl mx-auto flex gap-2">
+          <textarea id="prompt" rows="2"
+                    placeholder="Ask something…"
+                    class="flex-1 resize-none rounded-md border border-slate-300
+                           px-3 py-2 focus:outline-none focus:ring-2
+                           focus:ring-indigo-500"></textarea>
+          <button id="send-btn" type="submit"
+                  class="px-5 py-2 rounded-md bg-indigo-600 text-white
+                         font-medium hover:bg-indigo-700
+                         disabled:bg-slate-300">
+            Send
+          </button>
+        </form>
+      </footer>
+    </main>
+  </div>
+
+  <!-- ── Modal: extracted text viewer ─────────────────────────────────── -->
+  <div id="text-modal"
+       class="fixed inset-0 bg-black/50 hidden items-center justify-center z-50">
+    <div class="bg-white rounded-lg w-3/4 max-w-3xl max-h-[80vh] flex flex-col">
+      <header class="p-4 border-b flex items-center justify-between">
+        <h3 id="text-modal-title" class="font-semibold"></h3>
+        <button id="text-modal-close"
+                class="text-slate-500 hover:text-slate-800 text-2xl leading-none">
+          &times;
+        </button>
+      </header>
+      <pre id="text-modal-body"
+           class="flex-1 overflow-auto whitespace-pre-wrap p-4 text-sm
+                  font-mono text-slate-700"></pre>
+    </div>
+  </div>
+
+  <script src="./app.js"></script>
+</body>
+</html>

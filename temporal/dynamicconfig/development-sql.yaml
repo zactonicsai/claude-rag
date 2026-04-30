@@ -1,0 +1,25 @@
+# Temporal server dynamic config — development defaults.
+# Mounted into the container at /etc/temporal/config/dynamicconfig/development-sql.yaml,
+# matching DYNAMIC_CONFIG_FILE_PATH in docker-compose.yml.
+
+limit.maxIDLength:
+  - value: 255
+    constraints: {}
+
+system.forceSearchAttributesCacheRefreshOnRead:
+  - value: true
+    constraints: {}
+
+# Allow large activity payloads — base64-encoded file bodies travel through
+# Temporal in our pipeline and the default 2MiB single-payload cap will trip
+# on PDFs / images bigger than ~1.4 MiB before encoding.
+limit.blobSize.warn:
+  - value: 8388608   # 8 MiB warn
+    constraints: {}
+limit.blobSize.error:
+  - value: 33554432  # 32 MiB hard limit
+    constraints: {}
+
+frontend.enableUpdateWorkflowExecution:
+  - value: true
+    constraints: {}
